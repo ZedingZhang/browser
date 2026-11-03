@@ -727,7 +727,9 @@ pub fn postMessage(self: *Window, message: js.Value, target_origin_or_options: ?
         .frame = target_frame,
         .source = source_window,
         .origin = try arena.dupe(u8, origin),
+        .hold = target_frame.page.settle.hold(cloned.task),
     };
+    errdefer callback.hold.release();
 
     try target_frame.js.scheduler.add(callback, PostMessageCallback.run, 0, .{
         .name = "postMessage",
@@ -970,6 +972,7 @@ const PostMessageCallback = struct {
     arena: *lp.Arena,
     origin: []const u8,
     message: MessagePort.Message,
+    hold: js.Attribution.Hold,
 
     fn deinit(self: *PostMessageCallback) void {
         self.arena.release();
@@ -979,6 +982,7 @@ const PostMessageCallback = struct {
     // `cancelled` are mutually exclusive, so the temp is released exactly once.
     fn cancelled(ctx: *anyopaque) void {
         const self: *PostMessageCallback = @ptrCast(@alignCast(ctx));
+        self.hold.release();
         self.message.release();
         self.deinit();
     }
@@ -987,9 +991,13 @@ const PostMessageCallback = struct {
         const self: *PostMessageCallback = @ptrCast(@alignCast(ctx));
         defer self.deinit();
         defer self.message.releasePorts();
+        defer self.hold.release();
 
         const frame = self.frame;
         const window = frame.window;
+
+        const task_scope = frame.js.attribution.enterNew(.message, .{ .parent = self.message.task, .label = "window.postMessage" });
+        defer task_scope.exit();
 
         const event_target = window.asEventTarget();
 
