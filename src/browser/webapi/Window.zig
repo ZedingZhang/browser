@@ -991,7 +991,8 @@ const PostMessageCallback = struct {
         const self: *PostMessageCallback = @ptrCast(@alignCast(ctx));
         defer self.deinit();
         defer self.message.releasePorts();
-        defer self.hold.release();
+
+        self.hold.release();
 
         const frame = self.frame;
         const window = frame.window;
