@@ -1507,8 +1507,6 @@ pub fn documentIsLoaded(self: *Frame) void {
     }
 
     self._load_state = .load;
-    self.document._ready_state = .interactive;
-    self.window._performance.markNavigation(.dom_interactive);
     self._documentIsLoaded() catch |err| switch (err) {
         error.JsException => {}, // already logged
         // logged by whatever requested the terminate (watchdog, runaway loop)
@@ -1517,8 +1515,18 @@ pub fn documentIsLoaded(self: *Frame) void {
     };
 }
 
-fn _documentIsLoaded(self: *Frame) !void {
+fn documentIsInteractive(self: *Frame) !void {
+    if (self.document._ready_state != .loading or self.loadEventsAborted()) return;
+
+    self.document._ready_state = .interactive;
+    self.window._performance.markNavigation(.dom_interactive);
     try self.dispatchReadyStateChange();
+}
+
+fn _documentIsLoaded(self: *Frame) !void {
+    // Non-HTML documents and document.close() can reach this without the
+    // navigation parser's readiness transition.
+    try self.documentIsInteractive();
     if (self.loadEventsAborted()) return;
 
     const perf = self.window._performance;
@@ -2032,6 +2040,9 @@ fn frameDone(self: *Frame) !void {
                     parser.parseWithEncoding(raw_html, self.charset);
                 }
             }
+            // Parsing has finished, but deferred and module scripts have not.
+            // Their execution must observe interactive, before DOMContentLoaded.
+            try self.documentIsInteractive();
             self._script_manager.staticScriptsDone();
         },
         .text => |*buf| {
