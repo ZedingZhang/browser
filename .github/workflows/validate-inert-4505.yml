@@ -1,0 +1,74 @@
+name: Validate inert hit testing
+on:
+  push:
+    branches: [codex/validate-inert-4505]
+permissions:
+  contents: read
+env:
+  LIGHTPANDA_DISABLE_TELEMETRY: true
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/install
+      - name: Check formatting
+        run: |
+          zig fmt --check ./*.zig ./**/*.zig
+          zig fmt --check ./
+      - name: Confirm regressions fail without the fix
+        shell: bash
+        run: |
+          git show 8d41fa9ada989f8189cc68395e2775d903be0096:src/browser/webapi/Document.zig > src/browser/webapi/Document.zig
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/browser/frame/user_input.zig')
+          text = p.read_text()
+          text = text.replace('root.asNode().isInert(frame) or style_manager.hasDisplayNone(root)', 'style_manager.hasDisplayNone(root)')
+          p.write_text(text)
+          PY
+          set +e
+          make test F='user_input: mouse hit testing skips inert' ZIGFLAGS=-Dprebuilt_v8_path=v8/libc_v8.a > red-subtree.log 2>&1
+          subtree=$?
+          make test F='user_input: inert roots are excluded' ZIGFLAGS=-Dprebuilt_v8_path=v8/libc_v8.a > red-root.log 2>&1
+          root=$?
+          set -e
+          git restore --source=HEAD -- src/browser/webapi/Document.zig src/browser/frame/user_input.zig
+          cat red-subtree.log red-root.log
+          test "$subtree" -ne 0
+          test "$root" -ne 0
+          grep -F 'TestUnexpectedResult' red-subtree.log
+          grep -F 'TestUnexpectedResult' red-root.log
+          echo RED_CONFIRMED
+      - name: Run full test suite with fix
+        run: make test ZIGFLAGS=-Dprebuilt_v8_path=v8/libc_v8.a
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+          repository: lightpanda-io/demo
+          path: demo
+      - name: Start test server
+        run: |
+          zig build -Dprebuilt_v8_path=v8/libc_v8.a test-server > test-server.log 2>&1 &
+          timeout 600 bash -c 'until curl -sf -o /dev/null http://127.0.0.1:9582/reset; do sleep 1; done'
+      - name: Install Chrome test dependencies
+        working-directory: demo
+        run: npm install
+      - name: Validate hit testing fixture in Chrome
+        working-directory: demo
+        env:
+          BROWSER_REPO: ${{ github.workspace }}
+        run: node browser-tests/run.js document/element_from_point_inert
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: inert-validation-logs
+          path: |
+            red-subtree.log
+            red-root.log
+            test-server.log
