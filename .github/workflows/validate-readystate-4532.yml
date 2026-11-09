@@ -1,0 +1,62 @@
+name: Validate readyState regression
+on:
+  push:
+    branches: [codex/validate-readystate-4532]
+permissions:
+  contents: read
+env:
+  LIGHTPANDA_DISABLE_TELEMETRY: true
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/install
+      - name: Check formatting
+        run: |
+          zig fmt --check ./*.zig ./**/*.zig
+          zig fmt --check ./
+      - name: Confirm regression fails on unchanged production code
+        shell: bash
+        run: |
+          git show 8d41fa9ada989f8189cc68395e2775d903be0096:src/browser/Frame.zig > src/browser/Frame.zig
+          set +e
+          make test F='WebApi: Frame#readystatechange_deferred.html' ZIGFLAGS=-Dprebuilt_v8_path=v8/libc_v8.a > red.log 2>&1
+          result=$?
+          set -e
+          git restore --source=HEAD -- src/browser/Frame.zig
+          cat red.log
+          test "$result" -ne 0
+          grep -E 'expected.*interactive.*got.*loading' red.log
+          echo RED_CONFIRMED
+      - name: Run full test suite with fix
+        run: make test ZIGFLAGS=-Dprebuilt_v8_path=v8/libc_v8.a
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+          repository: lightpanda-io/demo
+          path: demo
+      - name: Start test server
+        run: |
+          zig build -Dprebuilt_v8_path=v8/libc_v8.a test-server > test-server.log 2>&1 &
+          timeout 600 bash -c 'until curl -sf -o /dev/null http://127.0.0.1:9582/reset; do sleep 1; done'
+      - name: Install Chrome test dependencies
+        working-directory: demo
+        run: npm install
+      - name: Validate readiness fixtures in Chrome
+        working-directory: demo
+        env:
+          BROWSER_REPO: ${{ github.workspace }}
+        run: node browser-tests/run.js page/readystatechange
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: readystate-validation-logs
+          path: |
+            red.log
+            test-server.log
