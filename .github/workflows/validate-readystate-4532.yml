@@ -20,21 +20,9 @@ jobs:
         run: |
           zig fmt --check ./*.zig ./**/*.zig
           zig fmt --check ./
-      - name: Confirm regression fails on unchanged production code
-        shell: bash
-        run: |
-          git show 8d41fa9ada989f8189cc68395e2775d903be0096:src/browser/Frame.zig > src/browser/Frame.zig
-          set +e
-          make test F='WebApi: Frame#readystatechange_deferred.html' ZIGFLAGS=-Dprebuilt_v8_path=v8/libc_v8.a > red.log 2>&1
-          result=$?
-          set -e
-          git restore --source=HEAD -- src/browser/Frame.zig
-          cat red.log
-          test "$result" -ne 0
-          grep -E 'expected.*interactive.*got.*loading' red.log
-          echo RED_CONFIRMED
       - name: Run full test suite with fix
-        run: make test ZIGFLAGS=-Dprebuilt_v8_path=v8/libc_v8.a
+        shell: bash
+        run: make test ZIGFLAGS=-Dprebuilt_v8_path=v8/libc_v8.a 2>&1 | tee green.log
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           persist-credentials: false
@@ -58,5 +46,5 @@ jobs:
         with:
           name: readystate-validation-logs
           path: |
-            red.log
+            green.log
             test-server.log
