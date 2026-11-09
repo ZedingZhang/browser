@@ -1428,7 +1428,7 @@ pub fn stopLoading(self: *Frame) void {
 // A cross-document navigation has been scheduled (or started) for this frame:
 // its current document is superseded and must never fire DOMContentLoaded or
 // load, even if the replacement is discarded or fails. Deliberately does NOT
-// touch _load_state — the parser can still be on the stack, and open/write/
+// touch _load_state — the parser can still be on the stack, and write/
 // maybeCheckpoint key off it.
 pub fn abortDocumentLoad(self: *Frame) void {
     self.document._load_aborted = true;
@@ -1437,7 +1437,7 @@ pub fn abortDocumentLoad(self: *Frame) void {
 // The navigation parser is on the stack, i.e. an inline script is running from
 // inside parser.parse(). Narrower than `_load_state == .parsing`, which stays
 // true through deferred and async scripts.
-fn parserIsRunning(self: *const Frame) bool {
+pub fn parserIsRunning(self: *const Frame) bool {
     return switch (self._parse_state) {
         .html => true,
         else => false,
@@ -2043,7 +2043,11 @@ fn frameDone(self: *Frame) !void {
             // Parsing has finished, but deferred and module scripts have not.
             // Their execution must observe interactive, before DOMContentLoaded.
             try self.documentIsInteractive();
-            self._script_manager.staticScriptsDone();
+            // A readiness handler can open and close a new document, which
+            // already completes the script manager's initial parse.
+            if (!self._script_manager.base.static_scripts_done) {
+                self._script_manager.staticScriptsDone();
+            }
         },
         .text => |*buf| {
             try buf.appendSlice(self.page_arena, "</pre></body></html>");
